@@ -20,6 +20,20 @@ final class DuetModel: ObservableObject {
         timer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }
+        registerHotKeys()
+    }
+
+    /// Hotkeys drive the speakers, since those are the ones you can't reach.
+    private func registerHotKeys() {
+        let manager = HotKeyManager.shared
+        manager.register(.muteSpeakers) { [weak self] in self?.toggleMute(speaker: true) }
+        manager.register(.dimSpeakers) { [weak self] in self?.toggleDim(speaker: true) }
+        manager.register(.volumeUp) { [weak self] in
+            self?.nudgeGain(speaker: true, by: hotKeyVolumeStep)
+        }
+        manager.register(.volumeDown) { [weak self] in
+            self?.nudgeGain(speaker: true, by: -hotKeyVolumeStep)
+        }
     }
 
     func refresh() {
@@ -280,6 +294,10 @@ struct ControlPanel: View {
 
             Divider()
 
+            shortcutsRow
+
+            Divider()
+
             footer
         }
         .padding(18)
@@ -356,6 +374,24 @@ struct ControlPanel: View {
     static func rateLabel(_ hz: Int) -> String {
         let k = Double(hz) / 1000
         return k == k.rounded() ? "\(Int(k)) kHz" : String(format: "%.1f kHz", k)
+    }
+
+    /// Listed once so they're learnable. They act on the speakers.
+    private var shortcutsRow: some View {
+        let blocked = HotKeyManager.shared.unavailable.map(\.id)
+        return VStack(alignment: .leading, spacing: 5) {
+            ForEach(HotKeySpec.all, id: \.id) { spec in
+                HStack {
+                    Text(spec.name)
+                        .font(.system(size: 11))
+                        .foregroundStyle(blocked.contains(spec.id) ? .tertiary : .secondary)
+                    Spacer()
+                    Text(blocked.contains(spec.id) ? "in use elsewhere" : spec.display)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+        }
     }
 
     private var footer: some View {

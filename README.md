@@ -16,6 +16,21 @@ That last bit matters if your Duet's screen has died, which is why I wrote it.
 Runs alongside Control 2 quite happily. Change something in one and the other
 catches up.
 
+## Shortcuts
+
+| Action | Key |
+| --- | --- |
+| Mute | ⌃⌥⌘M |
+| Dim | ⌃⌥⌘D |
+| Volume up | ⌃⌥⌘↑ |
+| Volume down | ⌃⌥⌘↓ |
+
+These act on the speakers and work from any app. They don't need Accessibility
+permission, and they're listed in the app so you don't have to remember them. If
+another app has already claimed one, that row says so and the rest still work.
+
+To change them, edit `HotKeySpec` in `Sources/HotKeys.swift`.
+
 ## Build
 
 ```sh
