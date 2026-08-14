@@ -4,22 +4,25 @@ import Foundation
 // client, so this only has to listen: no registration, no subscription.
 //
 // Payload is the device UID then 60 float32s, as 20 groups of three. The first
-// value in each group is always exactly 0.0; the other two are the channel pair
-// in dBFS, with -inf for silence.
+// value in each group is always exactly 0.0. The second is a peak hold and the
+// third is the current level, both dBFS, with -inf for silence. Confirmed by
+// stopping a tone: the peak sat flat at -10.42 for nearly two seconds while the
+// level fell 34 dB.
 //
 // Which group is which was found by sweeping each input's gain and watching what
 // moved, and by playing a tone of known amplitude.
 
 struct MeterLevels: Equatable {
-    var left: Double = -.infinity
-    var right: Double = -.infinity
+    /// Held for roughly two seconds after a transient, then decays.
+    var peak: Double = -.infinity
+    /// Falls away immediately, at about 20 dB per second.
+    var level: Double = -.infinity
 
     static let silent = MeterLevels()
 
-    /// These are decaying peak holds, and the decay isn't clamped: a channel left
-    /// silent walks off to -200 dB and beyond. Treat anything under the floor as
-    /// silence rather than trying to plot it.
-    var peak: Double { max(left, right) }
+    /// Neither decay is clamped: a channel left silent walks off past -200 dB.
+    /// Treat anything under the floor as silence rather than plotting it.
+    static let floor: Double = -60
 }
 
 struct MeterSet: Equatable {
@@ -94,7 +97,7 @@ final class MeterMonitor {
         }
 
         func group(_ index: Int) -> MeterLevels {
-            MeterLevels(left: value(index * 3 + 1), right: value(index * 3 + 2))
+            MeterLevels(peak: value(index * 3 + 1), level: value(index * 3 + 2))
         }
 
         var set = MeterSet()

@@ -134,8 +134,17 @@ hello and they arrive. Metering is global rather than per client, so Glue either
 streams to everyone or to no one.
 
 Payload is the device UID, null terminated, then 60 float32s as **20 groups of
-three**. The first value in each group is always exactly `0.0`; the other two are
-the channel pair in dBFS. Silence reads `-inf`.
+three**:
+
+```
+[ 0.0 , peak hold , current level ]
+```
+
+Both in dBFS, silence reads `-inf`. The first value is always exactly `0.0`.
+
+They are not a stereo pair. Stop a tone and the peak sits flat while the level
+falls: measured, the peak held at -10.42 dB for nearly two seconds while the
+level dropped 34 dB. The level falls at about 20 dB per second.
 
 Groups on a Duet 2:
 
@@ -154,9 +163,9 @@ correct figure to two decimal places.
 
 Levels are pre-fader, so they don't follow the output level control.
 
-**They are decaying peak holds and the decay is not clamped.** A channel left
-silent keeps falling past -200 dB and on to absurd values. Treat anything below
-your floor as silence.
+**Neither decay is clamped.** A channel left silent keeps falling past -200 dB
+and on to absurd values, which is why an idle capture shows figures like -1652.
+Treat anything below your floor as silence.
 
 **What starts metering is still unknown.** It runs continuously once started and
 survives Control 2 quitting, but I never caught the off to on transition. If no

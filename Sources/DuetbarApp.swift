@@ -219,34 +219,40 @@ struct PillToggle: View {
 /// Sections are separated by hairlines rather than boxed, so the panel reads as
 /// one surface. The buttons keep their own glass, since those are real controls.
 
-/// Two hairline bars, one per side of the pair. Deliberately quiet: it should
-/// read as movement in the corner of your eye, not as a feature.
+/// One bar for the level, with the peak hold marked by a thin line. Deliberately
+/// quiet: it should read as movement in the corner of your eye, not as a feature.
 struct MeterBar: View {
     let levels: MeterLevels
 
-    var body: some View {
-        VStack(spacing: 2.5) {
-            bar(levels.left)
-            bar(levels.right)
-        }
-    }
+    private let height: CGFloat = 5
+    private let markerWidth: CGFloat = 2
 
-    private func bar(_ decibels: Double) -> some View {
+    var body: some View {
         GeometryReader { geo in
+            let width = geo.size.width
+            let peak = fraction(levels.peak)
             ZStack(alignment: .leading) {
                 Capsule().fill(Color.primary.opacity(0.08))
                 Capsule()
-                    .fill(colour(decibels))
-                    .frame(width: geo.size.width * fraction(decibels))
+                    .fill(colour(levels.level))
+                    .frame(width: width * fraction(levels.level))
+                if peak > 0 {
+                    Capsule()
+                        .fill(Color.red)
+                        .frame(width: markerWidth)
+                        .offset(x: min(max(width * peak - markerWidth / 2, 0),
+                                       width - markerWidth))
+                }
             }
         }
-        .frame(height: 3)
+        .frame(height: height)
     }
 
-    /// -60 dBFS to 0 across the width. Silence arrives as -inf.
+    /// Floor to 0 dBFS across the width. Silence arrives as -inf.
     private func fraction(_ decibels: Double) -> Double {
         guard decibels.isFinite else { return 0 }
-        return min(max((decibels + 60) / 60, 0), 1)
+        let floor = MeterLevels.floor
+        return min(max((decibels - floor) / -floor, 0), 1)
     }
 
     private func colour(_ decibels: Double) -> Color {
