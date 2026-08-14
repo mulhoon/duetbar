@@ -1,3 +1,5 @@
 Duetbar.app/
+build/
+dist/
 .DS_Store
 *.pcap

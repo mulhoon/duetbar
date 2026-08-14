@@ -691,7 +691,7 @@ func showAbout() {
     NSApp.activate(ignoringOtherApps: true)
     NSApp.orderFrontStandardAboutPanel(options: [
         .applicationName: "Duetbar",
-        .applicationVersion: "0.1.0",
+        .applicationVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "",
         .credits: credits,
     ])
 }
