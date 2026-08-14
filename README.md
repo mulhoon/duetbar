@@ -3,16 +3,32 @@
 Menu bar control for the Apogee Duet 2 on macOS.
 
 Apogee Control 2 still runs but isn't updated any more. Duetbar does the parts
-you touch every day, from the menu bar, and keeps your output level visible.
-That last bit matters if your Duet's screen has died, which is why I wrote it.
+you touch every day, from the menu bar, and keeps your levels visible. That last
+bit matters if your Duet's screen has died, which is why I wrote it.
+
+<img src="docs/screenshot.png" width="620" alt="Duetbar panel showing four channel strips">
 
 ## What it does
 
-- **Speakers and headphones**: level, mute, dim, sum to mono
-- **Both inputs**: mic / +4 dBu / -10 dBV / instrument, gain, 48V, soft limit, phase invert
-- **Sample rate** up to 192 kHz
-- **Live meters** on both outputs and both inputs
-- **Live readout** in the menu bar
+Four channel strips: both inputs, headphones, speakers.
+
+**Meters** on every strip, live at 20 Hz, with a peak hold that sits where the
+loudest recent moment was and slides back after a couple of seconds. Green up to
+-12, pale green to 0, red above, on the same non-linear scale Apogee Control
+uses so the useful top few dB get the room they deserve.
+
+**Dials** for every level. Drag them, or scroll with the pointer over them. Hold
+shift for fine adjustment.
+
+**Inputs**: mic, +4 dBu, -10 dBV or instrument, with 48V, soft limit and phase
+invert. The icon above each meter follows the source. Gain is stored separately
+per mode, and Duetbar only ever writes the mode you're in, which avoids a trap
+in the protocol that silently overwrites the other one.
+
+**Outputs**: level, mute, dim and sum to mono, separately for headphones and
+speakers.
+
+**Sample rate** from 44.1 up to 192 kHz.
 
 Runs alongside Control 2 quite happily. Change something in one and the other
 catches up.
@@ -27,8 +43,7 @@ catches up.
 | Volume down | ⌃⌥⌘↓ |
 
 These act on the speakers and work from any app. They don't need Accessibility
-permission, and they're listed in the app so you don't have to remember them. If
-another app has already claimed one, that row says so and the rest still work.
+permission. If another app has already claimed one, the rest still work.
 
 To change them, edit `HotKeySpec` in `Sources/HotKeys.swift`.
 
@@ -39,8 +54,7 @@ To change them, edit `HotKeySpec` in `Sources/HotKeys.swift`.
 open Duetbar.app
 ```
 
-Needs the Xcode command line tools, and macOS 13 or later. On macOS 26 it picks
-up the Liquid Glass styling.
+Needs the Xcode command line tools, and macOS 13 or later.
 
 Apogee's software has to be installed, because Duetbar talks to the ApogeeGlue
 background service that comes with it. You don't need to run Control 2 itself.
@@ -59,9 +73,9 @@ There's a measurement in [docs/PROTOCOL.md](docs/PROTOCOL.md).
 
 ## Protocol
 
-[docs/PROTOCOL.md](docs/PROTOCOL.md) has the wire format and the property IDs,
-worked out by watching Control 2 talk to the service. Take it if you want to
-build something else, or add another Apogee interface.
+[docs/PROTOCOL.md](docs/PROTOCOL.md) has the wire format, all 22 property IDs and
+the meter layout, worked out by watching Control 2 talk to the service. Take it
+if you want to build something else, or add another Apogee interface.
 
 ## Status
 

@@ -111,6 +111,13 @@ final class DuetModel: ObservableObject {
         GlueService.setActiveGain(input: index, source: source, dB: dB)
     }
 
+    func nudgeInputGain(_ index: Int, by delta: Double) {
+        let source = state.inputs[index].source
+        guard source.hasGain else { return }
+        let current = source == .mic ? state.inputs[index].micGain : state.inputs[index].instGain
+        setInputGain(index, min(max(current + delta, 0), source.maxGain))
+    }
+
     func toggleSoftLimit(_ index: Int) {
         state.inputs[index].softLimit.toggle()
         GlueService.setSoftLimit(input: index, state.inputs[index].softLimit)
@@ -148,169 +155,378 @@ final class DuetModel: ObservableObject {
 
 // MARK: - Pieces
 
-/// The system slider already carries the Liquid Glass treatment, keyboard arrows
-/// and accessibility, so use it rather than reimplementing a knob. `.large` keeps
-/// it easy to grab.
-struct LevelSlider: View {
+/// Shared meter scale and colours, matching Apogee Control: saturated green to
+/// -12, pale green to 0, red above. The scale is not linear; the top few dB get
+/// far more room, taken from Control's own tick spacing.
+enum MeterScale {
+    static let strongGreen = Color(red: 0.04, green: 0.76, blue: 0.24)
+    static let paleGreen = Color(red: 0.62, green: 0.88, blue: 0.66)
+    static let over = Color(red: 1.0, green: 0.16, blue: 0.12)
+
+    static let anchors: [(db: Double, at: Double)] = [
+        (-60, 0.00), (-40, 0.154), (-24, 0.327), (-12, 0.577), (-6, 0.808), (0, 1.00),
+    ]
+
+    static let stops: [Gradient.Stop] = [
+        .init(color: strongGreen, location: 0.0),
+        .init(color: strongGreen, location: 0.577),
+        .init(color: paleGreen, location: 0.577),
+        .init(color: paleGreen, location: 0.955),
+        .init(color: over, location: 0.955),
+        .init(color: over, location: 1.0),
+    ]
+
+    static func fraction(_ decibels: Double) -> Double {
+        guard decibels.isFinite else { return 0 }
+        if decibels <= anchors[0].db { return 0 }
+        if decibels >= 0 { return 1 }
+        for index in 1..<anchors.count {
+            let low = anchors[index - 1], high = anchors[index]
+            if decibels <= high.db {
+                let t = (decibels - low.db) / (high.db - low.db)
+                return low.at + t * (high.at - low.at)
+            }
+        }
+        return 1
+    }
+}
+
+/// Vertical meter with the peak hold as a thin line that gets pushed up by the level.
+struct VerticalMeter: View {
+    let levels: MeterLevels
+
+    var body: some View {
+        GeometryReader { geo in
+            let height = geo.size.height
+            let peak = MeterScale.fraction(levels.peak)
+            ZStack(alignment: .bottom) {
+                Rectangle().fill(Color.primary.opacity(0.10))
+
+                Rectangle()
+                    .fill(LinearGradient(gradient: Gradient(stops: MeterScale.stops),
+                                         startPoint: .bottom, endPoint: .top))
+                    .mask(alignment: .bottom) {
+                        Rectangle().frame(height: height * MeterScale.fraction(levels.level))
+                    }
+
+                if peak > 0 {
+                    Rectangle()
+                        .fill(MeterScale.over)
+                        .frame(height: 2)
+                        .offset(y: -min(max(height * peak - 1, 0), height - 2))
+                }
+            }
+        }
+        .frame(width: 9)
+    }
+}
+
+/// A dial. Arc track with the value filled in, and a pointer.
+///
+/// Dragging is vertical, with the whole range covering about 160 points of
+/// travel. Hold shift for fine adjustment, since a 54 point dial has too little
+/// travel to set a 75 dB range precisely otherwise.
+struct Dial: View {
     @Binding var value: Double
     var range: ClosedRange<Double>
     var enabled = true
     var onEditingChanged: (Bool) -> Void = { _ in }
+    /// Reports a change in dB rather than an absolute, because a monitor closure
+    /// captures `value` at hover time and never sees later updates.
+    var onScroll: (Double) -> Void = { _ in }
+
+    @State private var dragStart: Double?
+    @State private var hovering = false
+    @State private var scrollMonitor: Any?
+    @State private var scrollIdle: Timer?
+
+    private let diameter: CGFloat = 54
+    private let lineWidth: CGFloat = 3.5
+    /// Degrees of travel, leaving a gap at the bottom.
+    private let sweep: Double = 270
+
+    private var pointerLength: CGFloat { diameter / 2 }
+
+    private var fraction: Double {
+        let span = range.upperBound - range.lowerBound
+        guard span > 0 else { return 0 }
+        return min(max((value - range.lowerBound) / span, 0), 1)
+    }
 
     var body: some View {
-        Slider(value: $value, in: range, onEditingChanged: onEditingChanged)
-            .controlSize(.large)
-            .disabled(!enabled)
-            .opacity(enabled ? 1 : 0.45)
+        ZStack {
+            arc(to: 1).stroke(Color.primary.opacity(0.12),
+                              style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+            arc(to: fraction).stroke(Color.primary.opacity(enabled ? 0.85 : 0.25),
+                                     style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+
+            // Same thickness as the arc, running from the exact centre out to
+            // the arc's centreline so the two meet rather than leaving a gap.
+            Capsule()
+                .fill(Color.primary.opacity(enabled ? 0.85 : 0.25))
+                .frame(width: lineWidth, height: pointerLength)
+                .offset(y: -pointerLength / 2)
+                .rotationEffect(.degrees(225 + fraction * sweep))
+        }
+        .frame(width: diameter, height: diameter)
+        .contentShape(Circle())
+        .opacity(enabled ? 1 : 0.5)
+        .onHover { inside in
+            hovering = inside
+            inside ? startScrollMonitor() : stopScrollMonitor()
+        }
+        .onDisappear { stopScrollMonitor() }
+        .gesture(
+            DragGesture(minimumDistance: 1)
+                .onChanged { drag in
+                    guard enabled else { return }
+                    if dragStart == nil {
+                        dragStart = value
+                        onEditingChanged(true)
+                    }
+                    let span = range.upperBound - range.lowerBound
+                    let fine = NSEvent.modifierFlags.contains(.shift) ? 4.0 : 1.0
+                    let delta = -drag.translation.height / (160 * fine) * span
+                    value = min(max((dragStart ?? value) + delta, range.lowerBound),
+                                range.upperBound)
+                }
+                .onEnded { _ in
+                    guard dragStart != nil else { return }
+                    dragStart = nil
+                    onEditingChanged(false)
+                }
+        )
+    }
+
+    /// Scroll to adjust, but only while the pointer is over this dial. A local
+    /// monitor is used rather than an overlaid NSView, because an NSView on top
+    /// would swallow the drag gesture underneath it.
+    private func startScrollMonitor() {
+        guard enabled, scrollMonitor == nil else { return }
+        scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { event in
+            var dy = event.scrollingDeltaY
+            if event.isDirectionInvertedFromDevice { dy = -dy }
+
+            // Trackpads send many small deltas; a wheel sends a few large ones.
+            let perUnit = event.hasPreciseScrollingDeltas ? 0.04 : 0.5
+            let fine = event.modifierFlags.contains(.shift) ? 0.25 : 1.0
+            let step = -dy * perUnit * fine     // scroll up raises the level
+            guard step != 0 else { return nil }
+
+            if dragStart == nil { onEditingChanged(true) }
+            onScroll(step)
+
+            // Let polling resume once scrolling stops.
+            scrollIdle?.invalidate()
+            scrollIdle = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: false) { _ in
+                if dragStart == nil { onEditingChanged(false) }
+            }
+            return nil          // consume, so nothing behind scrolls
+        }
+    }
+
+    private func stopScrollMonitor() {
+        if let scrollMonitor { NSEvent.removeMonitor(scrollMonitor) }
+        scrollMonitor = nil
+        scrollIdle?.invalidate()
+        scrollIdle = nil
+    }
+
+    private func arc(to end: Double) -> some Shape {
+        Circle()
+            .trim(from: 0, to: (sweep / 360) * end)
+            .rotation(.degrees(90 + (360 - sweep) / 2))
     }
 }
 
-/// A real segmented picker, which the system renders as glass on macOS 26.
-struct SourcePicker: View {
+/// Colour of a pill when it's on. Fill and text travel together so contrast
+/// stays right, including for the near-black one which needs light text.
+struct PillTint {
+    let fill: Color
+    let text: Color
+
+    static let orange = PillTint(fill: Color(red: 0.95, green: 0.53, blue: 0.12), text: .white)
+    static let turquoise = PillTint(fill: Color(red: 0.08, green: 0.73, blue: 0.64), text: .white)
+    /// Black in light mode, white in dark, with the text inverted to match.
+    static let ink = PillTint(fill: .primary, text: Color(nsColor: .textBackgroundColor))
+}
+
+/// One surface for every pill, so the buttons and the menu are the same height
+/// and width by construction rather than by two sets of numbers agreeing.
+private struct PillSurface: ViewModifier {
+    let fill: Color
+
+    func body(content: Content) -> some View {
+        content
+            .font(.system(size: 11, weight: .medium))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 5)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous).fill(fill)
+            )
+    }
+}
+
+private extension View {
+    func pillSurface(_ fill: Color) -> some View { modifier(PillSurface(fill: fill)) }
+}
+
+private let pillOffFill = Color.primary.opacity(0.09)
+
+struct PillToggle: View {
+    let title: String
+    let isOn: Bool
+    var tint: PillTint = .orange
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .foregroundStyle(isOn ? tint.text : Color.secondary)
+                .pillSurface(isOn ? tint.fill : pillOffFill)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// The input source selector.
+///
+/// This is a plain `Button` that pops an `NSMenu`, not a SwiftUI `Menu`. SwiftUI
+/// menus carry their own minimum height and intrinsic width on macOS and ignore
+/// the label's frame, so they can never line up with the pills beside them. Using
+/// the same primitive as the pills makes them match by construction.
+struct PillMenu: View {
     let selection: InputSource
     let onSelect: (InputSource) -> Void
 
     var body: some View {
-        Picker("", selection: Binding(get: { selection }, set: onSelect)) {
-            ForEach(InputSource.allCases) { source in
-                Text(source.label).tag(source)
-            }
+        Button {
+            present()
+        } label: {
+            Text(selection.label)
+                .foregroundStyle(.secondary)
+                .pillSurface(pillOffFill)
         }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .controlSize(.small)
+        .buttonStyle(.plain)
+    }
+
+    private func present() {
+        let menu = NSMenu()
+        for source in InputSource.allCases {
+            let item = NSMenuItem(title: source.label,
+                                  action: #selector(SourceMenuTarget.pick(_:)),
+                                  keyEquivalent: "")
+            item.target = SourceMenuTarget.shared
+            item.representedObject = source.rawValue
+            item.state = source == selection ? .on : .off
+            menu.addItem(item)
+        }
+        SourceMenuTarget.shared.handler = onSelect
+
+        guard let event = NSApp.currentEvent, let view = event.window?.contentView else { return }
+        NSMenu.popUpContextMenu(menu, with: event, for: view)
     }
 }
 
-/// Glass when it's off, prominent glass when it's on. Both are system styles, so
-/// the highlight, press feedback and vibrancy come from macOS rather than from us.
-struct PillToggle: View {
+/// NSMenu needs an Objective-C target, which a SwiftUI view can't be.
+final class SourceMenuTarget: NSObject {
+    static let shared = SourceMenuTarget()
+    var handler: ((InputSource) -> Void)?
+
+    @objc func pick(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? Int,
+              let source = InputSource(rawValue: raw) else { return }
+        handler?(source)
+    }
+}
+
+/// No SF Symbol exists for an XLR connector, so draw one: the shell with three
+/// pins in a triangle.
+struct XLRIcon: View {
+    var body: some View {
+        ZStack {
+            Circle().strokeBorder(lineWidth: 1.2)
+            // Pins left, right and bottom.
+            ForEach([90.0, 180.0, 270.0], id: \.self) { angle in
+                Circle()
+                    .frame(width: 3.2, height: 3.2)
+                    .offset(y: -4.4)
+                    .rotationEffect(.degrees(angle))
+            }
+        }
+        .frame(width: 17, height: 17)
+    }
+}
+
+/// What's plugged into the input, at a glance.
+struct SourceIcon: View {
+    let source: InputSource
+
+    var body: some View {
+        Group {
+            switch source {
+            case .mic:
+                Image(systemName: "music.mic").font(.system(size: 16))
+            case .instrument:
+                // There's no singular guitar symbol, only the pair.
+                Image(systemName: "guitars").font(.system(size: 16))
+            case .plus4, .minus10:
+                XLRIcon()
+            }
+        }
+        .foregroundStyle(.secondary)
+        .frame(width: 18, height: 18)
+    }
+}
+
+// MARK: - Channel strip
+
+struct ChannelStrip<Controls: View>: View {
     let title: String
-    let isOn: Bool
-    let action: () -> Void
-
-    @ViewBuilder
-    var body: some View {
-        if #available(macOS 26.0, *) {
-            if isOn {
-                button.buttonStyle(.glassProminent).controlSize(.large)
-            } else {
-                button.buttonStyle(.glass).controlSize(.large)
-            }
-        } else {
-            button
-                .buttonStyle(.plain)
-                .background(
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .fill(isOn ? Color.accentColor : Color.primary.opacity(0.07))
-                )
-                .foregroundStyle(isOn ? Color.white : Color.secondary)
-        }
-    }
-
-    private var button: some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: 12.5, weight: .medium))
-        }
-    }
-}
-
-/// Sections are separated by hairlines rather than boxed, so the panel reads as
-/// one surface. The buttons keep their own glass, since those are real controls.
-
-/// One bar for the level, with the peak hold marked by a thin line. Deliberately
-/// quiet: it should read as movement in the corner of your eye, not as a feature.
-struct MeterBar: View {
-    let levels: MeterLevels
-
-    private let height: CGFloat = 5
-    private let markerWidth: CGFloat = 2
-
-    var body: some View {
-        GeometryReader { geo in
-            let width = geo.size.width
-            let peak = fraction(levels.peak)
-            ZStack(alignment: .leading) {
-                Capsule().fill(Color.primary.opacity(0.08))
-                Capsule()
-                    .fill(colour(levels.level))
-                    .frame(width: width * fraction(levels.level))
-                if peak > 0 {
-                    Capsule()
-                        .fill(Color.red)
-                        .frame(width: markerWidth)
-                        .offset(x: min(max(width * peak - markerWidth / 2, 0),
-                                       width - markerWidth))
-                }
-            }
-        }
-        .frame(height: height)
-    }
-
-    /// Floor to 0 dBFS across the width. Silence arrives as -inf.
-    private func fraction(_ decibels: Double) -> Double {
-        guard decibels.isFinite else { return 0 }
-        let floor = MeterLevels.floor
-        return min(max((decibels - floor) / -floor, 0), 1)
-    }
-
-    private func colour(_ decibels: Double) -> Color {
-        if decibels >= -0.5 { return .red }
-        if decibels >= -6 { return .orange }
-        return .accentColor
-    }
-}
-
-struct SectionLabel: View {
-    let text: String
-    var body: some View {
-        Text(text)
-            .font(.system(size: 12.5, weight: .medium))
-            .foregroundStyle(.secondary)
-    }
-}
-
-/// One output, in its own card.
-struct OutputCard: View {
-    let title: String
-    let state: OutputState
     let meters: MeterLevels
-    let onGain: (Double) -> Void
+    let value: Double
+    let range: ClosedRange<Double>
+    var enabled = true
+    var sourceIcon: InputSource? = nil
+    let onValue: (Double) -> Void
     let onEditing: (Bool) -> Void
-    let onMute: () -> Void
-    let onDim: () -> Void
-    let onMono: () -> Void
+    var onScroll: (Double) -> Void = { _ in }
+    @ViewBuilder var controls: Controls
+
+    static var width: CGFloat { 92 }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top) {
-                SectionLabel(text: title)
-                Spacer()
-                HStack(alignment: .firstTextBaseline, spacing: 3) {
-                    Text(String(format: "%.1f", state.gain))
-                        .font(.system(size: 30, weight: .regular))
-                        .monospacedDigit()
-                        .foregroundStyle(state.muted ? .tertiary : .primary)
-                    Text("dB")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(.tertiary)
+        VStack(spacing: 10) {
+            Text(title)
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+
+            VerticalMeter(levels: meters)
+                .frame(height: 144)
+                .padding(.bottom, 8)
+                .overlay(alignment: .topLeading) {
+                    if let sourceIcon {
+                        SourceIcon(source: sourceIcon).offset(x: -26)
+                    }
                 }
-            }
 
-            LevelSlider(value: Binding(get: { state.gain }, set: onGain),
-                        range: -64...0,
-                        onEditingChanged: onEditing)
+            Dial(value: Binding(get: { value }, set: onValue),
+                 range: range,
+                 enabled: enabled,
+                 onEditingChanged: onEditing,
+                 onScroll: onScroll)
 
-            MeterBar(levels: meters)
+            Text(enabled ? String(format: "%.1f", value) : "line")
+                .font(.system(size: 13, weight: .medium))
+                .monospacedDigit()
+                .foregroundStyle(enabled ? .primary : .tertiary)
 
-            HStack(spacing: 8) {
-                PillToggle(title: "Mute", isOn: state.muted, action: onMute)
-                PillToggle(title: "Dim", isOn: state.dimmed, action: onDim)
-                PillToggle(title: "Mono", isOn: state.mono, action: onMono)
-                Spacer(minLength: 0)
-            }
+            VStack(spacing: 5) { controls }
+
+            Spacer(minLength: 0)
         }
+        .frame(width: Self.width)
     }
 }
 
@@ -320,109 +536,83 @@ struct ControlPanel: View {
     @ObservedObject var model: DuetModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            OutputCard(title: "Speakers",
-                       state: model.state.speaker,
-                       meters: model.meters.speaker,
-                       onGain: { model.setGain(speaker: true, $0) },
-                       onEditing: { $0 ? model.beginEditing() : model.endEditing() },
-                       onMute: { model.toggleMute(speaker: true) },
-                       onDim: { model.toggleDim(speaker: true) },
-                       onMono: { model.toggleMono(speaker: true) })
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Duetbar")
+                .font(.system(size: 21, weight: .semibold))
+
+            HStack(alignment: .top, spacing: 12) {
+                inputStrip(0)
+                inputStrip(1)
+                outputStrip(speaker: false)
+                outputStrip(speaker: true)
+            }
 
             Divider()
-
-            OutputCard(title: "Headphones",
-                       state: model.state.headphones,
-                       meters: model.meters.headphones,
-                       onGain: { model.setGain(speaker: false, $0) },
-                       onEditing: { $0 ? model.beginEditing() : model.endEditing() },
-                       onMute: { model.toggleMute(speaker: false) },
-                       onDim: { model.toggleDim(speaker: false) },
-                       onMono: { model.toggleMono(speaker: false) })
-
-            Divider()
-
-            inputSection(0)
-
-            Divider()
-
-            inputSection(1)
-
-            Divider()
-
-            sampleRateRow
-
-            Divider()
-
-            shortcutsRow
-
-            Divider()
-
             footer
         }
-        .padding(18)
-        .frame(width: 340)
+        .padding(16)
         .disabled(!model.connected)
         .overlay { if !model.connected { disconnected } }
         .onAppear { model.startMeters() }
         .onDisappear { model.stopMeters() }
     }
 
-    private func inputSection(_ index: Int) -> some View {
+    private func inputStrip(_ index: Int) -> some View {
         let input = model.state.inputs[index]
-        return VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top, spacing: 7) {
-                SectionLabel(text: "Input \(index + 1)")
-                Spacer(minLength: 8)
-                SourcePicker(selection: input.source,
-                             onSelect: { model.setSource(index, $0) })
-                    .frame(width: 168)
+        return ChannelStrip(
+            title: "Input \(index + 1)",
+            meters: index == 0 ? model.meters.input1 : model.meters.input2,
+            value: input.activeGain ?? 0,
+            range: 0...input.source.maxGain,
+            enabled: input.source.hasGain,
+            sourceIcon: input.source,
+            onValue: { model.setInputGain(index, $0) },
+            onEditing: { $0 ? model.beginEditing() : model.endEditing() },
+            onScroll: { model.nudgeInputGain(index, by: $0) }
+        ) {
+            PillMenu(selection: input.source) { model.setSource(index, $0) }
+
+            // Phantom only exists on a mic input, so don't offer a dead control.
+            PillToggle(title: "48V", isOn: input.phantom, tint: .orange) {
+                model.togglePhantom(index)
             }
+                .opacity(input.source == .mic ? 1 : 0)
+                .disabled(input.source != .mic)
 
-            HStack(spacing: 14) {
-                LevelSlider(value: Binding(get: { input.activeGain ?? 0 },
-                                           set: { model.setInputGain(index, $0) }),
-                            range: 0...input.source.maxGain,
-                            enabled: input.source.hasGain,
-                            onEditingChanged: { $0 ? model.beginEditing() : model.endEditing() })
-
-                HStack(alignment: .firstTextBaseline, spacing: 3) {
-                    if let gain = input.activeGain {
-                        Text(String(format: "%.1f", gain))
-                            .font(.system(size: 21, weight: .regular))
-                            .monospacedDigit()
-                        Text("dB")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(.tertiary)
-                    } else {
-                        Text("line")
-                            .font(.system(size: 14))
-                            .foregroundStyle(.tertiary)
-                    }
-                }
-                .frame(width: 74, alignment: .trailing)
+            PillToggle(title: "Limit", isOn: input.softLimit, tint: .turquoise) {
+                model.toggleSoftLimit(index)
             }
-
-            MeterBar(levels: index == 0 ? model.meters.input1 : model.meters.input2)
-
-            HStack(spacing: 8) {
-                // The hardware only has phantom on a mic input, so don't offer a
-                // control that would do nothing in the other three modes.
-                if input.source == .mic {
-                    PillToggle(title: "48V", isOn: input.phantom) { model.togglePhantom(index) }
-                }
-                PillToggle(title: "Soft Limit", isOn: input.softLimit) { model.toggleSoftLimit(index) }
-                PillToggle(title: "Phase Invert", isOn: input.phaseInverted) { model.togglePhase(index) }
-                Spacer(minLength: 0)
+            PillToggle(title: "Phase", isOn: input.phaseInverted, tint: .ink) {
+                model.togglePhase(index)
             }
         }
     }
 
-    private var sampleRateRow: some View {
-        HStack {
-            SectionLabel(text: "Sample rate")
-            Spacer()
+    private func outputStrip(speaker: Bool) -> some View {
+        let state = model.output(speaker: speaker)
+        return ChannelStrip(
+            title: speaker ? "Speakers" : "Headphones",
+            meters: speaker ? model.meters.speaker : model.meters.headphones,
+            value: state.gain,
+            range: -64...0,
+            onValue: { model.setGain(speaker: speaker, $0) },
+            onEditing: { $0 ? model.beginEditing() : model.endEditing() },
+            onScroll: { model.nudgeGain(speaker: speaker, by: $0) }
+        ) {
+            PillToggle(title: "Mute", isOn: state.muted, tint: .orange) {
+                model.toggleMute(speaker: speaker)
+            }
+            PillToggle(title: "Dim", isOn: state.dimmed, tint: .turquoise) {
+                model.toggleDim(speaker: speaker)
+            }
+            PillToggle(title: "Mono", isOn: state.mono, tint: .ink) {
+                model.toggleMono(speaker: speaker)
+            }
+        }
+    }
+
+    private var footer: some View {
+        HStack(spacing: 10) {
             Picker("", selection: Binding(get: { model.state.sampleRate },
                                           set: { model.setSampleRate($0) })) {
                 ForEach(GlueService.sampleRates, id: \.self) { rate in
@@ -432,45 +622,24 @@ struct ControlPanel: View {
             .pickerStyle(.menu)
             .labelsHidden()
             .controlSize(.small)
-            .frame(width: 112)
+            .frame(width: ChannelStrip<EmptyView>.width, alignment: .leading)
+
+            Spacer()
+
+            Button("About") { showAbout() }
+                .buttonStyle(.plain)
+                .font(.system(size: 11))
+                .foregroundStyle(.tertiary)
+            Button("Quit") { NSApplication.shared.terminate(nil) }
+                .buttonStyle(.plain)
+                .font(.system(size: 11))
+                .foregroundStyle(.tertiary)
         }
     }
 
     static func rateLabel(_ hz: Int) -> String {
         let k = Double(hz) / 1000
         return k == k.rounded() ? "\(Int(k)) kHz" : String(format: "%.1f kHz", k)
-    }
-
-    /// Listed once so they're learnable. They act on the speakers.
-    private var shortcutsRow: some View {
-        let blocked = HotKeyManager.shared.unavailable.map(\.id)
-        return VStack(alignment: .leading, spacing: 5) {
-            ForEach(HotKeySpec.all, id: \.id) { spec in
-                HStack {
-                    Text(spec.name)
-                        .font(.system(size: 11))
-                        .foregroundStyle(blocked.contains(spec.id) ? .tertiary : .secondary)
-                    Spacer()
-                    Text(blocked.contains(spec.id) ? "in use elsewhere" : spec.display)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.tertiary)
-                }
-            }
-        }
-    }
-
-    private var footer: some View {
-        HStack {
-            Button("About") { showAbout() }
-                .buttonStyle(.plain)
-                .font(.system(size: 11))
-                .foregroundStyle(.tertiary)
-            Spacer()
-            Button("Quit") { NSApplication.shared.terminate(nil) }
-                .buttonStyle(.plain)
-                .font(.system(size: 11))
-                .foregroundStyle(.tertiary)
-        }
     }
 
     private var disconnected: some View {
