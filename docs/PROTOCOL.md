@@ -34,8 +34,8 @@ you do.
 state. Several arrive on connect. The one you want has a populated `dev` node;
 the others carry app state with `dev` empty.
 
-**Opcode `0x68`**: meter data, constant, ignore it. It's most of the traffic, and
-draining the socket without a deadline never returns.
+**Opcode `0x68`**: meter data, see [Meters](#meters). It's most of the traffic, so
+never drain the socket without a deadline unless meters are what you want.
 
 **Opcode `0x03`**, client to server: set one property.
 
