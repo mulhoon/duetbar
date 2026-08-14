@@ -321,6 +321,33 @@ final class GlueConnection {
 
     func greet() { send(frame(Array(Glue.hello))) }
 
+    /// Streams every frame to `handler` until `condition` goes false or the
+    /// socket closes. Used for meters, which never stop arriving.
+    func readFrames(while condition: () -> Bool, handler: ([UInt8]) -> Void) {
+        var buffer = [UInt8]()
+        var chunk = [UInt8](repeating: 0, count: 65536)
+
+        while condition() {
+            let received = recv(socket, &chunk, chunk.count, 0)
+            if received <= 0 {
+                if errno == EAGAIN || errno == EWOULDBLOCK { continue }
+                return
+            }
+            buffer.append(contentsOf: chunk[0..<received])
+
+            var offset = 0
+            while offset + 8 <= buffer.count {
+                guard UInt32(littleEndianFrom: Array(buffer[offset..<(offset + 4)])) == Glue.magic
+                else { return }
+                let length = Int(UInt32(littleEndianFrom: Array(buffer[(offset + 4)..<(offset + 8)])))
+                guard offset + 8 + length <= buffer.count else { break }
+                handler(Array(buffer[(offset + 8)..<(offset + 8 + length)]))
+                offset += 8 + length
+            }
+            if offset > 0 { buffer.removeFirst(offset) }
+        }
+    }
+
     /// Reads until a full-tree message satisfying `matching` arrives, or the
     /// deadline passes. Glue streams meter data forever, so an unbounded drain
     /// never returns.

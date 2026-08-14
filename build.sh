@@ -32,7 +32,7 @@ swiftc -O \
   -target arm64-apple-macos13.0 \
   -framework SwiftUI -framework AppKit \
   -o "$BIN" \
-  Sources/GlueClient.swift Sources/HotKeys.swift Sources/DuetbarApp.swift
+  Sources/GlueClient.swift Sources/Meters.swift Sources/HotKeys.swift Sources/DuetbarApp.swift
 
 codesign --force --deep --sign - "$APP" 2>/dev/null || true
 

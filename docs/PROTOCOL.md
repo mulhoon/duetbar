@@ -126,3 +126,38 @@ header and let it ignore the trailer.
 
 Types aren't consistent across the tree. The same logical flag can arrive as a
 bool on one node and the string `"0"` on another, so accept both.
+
+## Meters
+
+Opcode `0x68`, server to client, about 20 Hz. No subscription needed: send the
+hello and they arrive. Metering is global rather than per client, so Glue either
+streams to everyone or to no one.
+
+Payload is the device UID, null terminated, then 60 float32s as **20 groups of
+three**. The first value in each group is always exactly `0.0`; the other two are
+the channel pair in dBFS. Silence reads `-inf`.
+
+Groups on a Duet 2:
+
+| Group | Meter |
+| --- | --- |
+| 4 | Input 1 |
+| 5 | Input 2 |
+| 6 | Speakers |
+| 7 | Headphones |
+| 0, 1, 2, 3, 8, 9 | Playback (duplicated) |
+| the rest | unused |
+
+Found by sweeping each input's gain and watching what moved, and by playing a
+tone of known amplitude: 0.25 amplitude metered as -12.04 dBFS, which is the
+correct figure to two decimal places.
+
+Levels are pre-fader, so they don't follow the output level control.
+
+**They are decaying peak holds and the decay is not clamped.** A channel left
+silent keeps falling past -200 dB and on to absurd values. Treat anything below
+your floor as silence.
+
+**What starts metering is still unknown.** It runs continuously once started and
+survives Control 2 quitting, but I never caught the off to on transition. If no
+`0x68` frames arrive, launching Control 2 once switches it on.

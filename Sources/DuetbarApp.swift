@@ -10,6 +10,9 @@ import SwiftUI
 final class DuetModel: ObservableObject {
     @Published var state = DeviceState()
     @Published var connected = false
+    @Published var meters = MeterSet()
+
+    private let meterMonitor = MeterMonitor()
 
     /// Set while a slider is being dragged, so polling can't yank it away.
     private var editing = false
@@ -47,6 +50,16 @@ final class DuetModel: ObservableObject {
                 if !self.editing { self.state = fresh }
             }
         }
+    }
+
+    /// Meters only run while the panel is open, so an idle app costs nothing.
+    func startMeters() {
+        meterMonitor.start { [weak self] set in self?.meters = set }
+    }
+
+    func stopMeters() {
+        meterMonitor.stop()
+        meters = MeterSet()
     }
 
     func beginEditing() { editing = true }
@@ -206,6 +219,43 @@ struct PillToggle: View {
 /// Sections are separated by hairlines rather than boxed, so the panel reads as
 /// one surface. The buttons keep their own glass, since those are real controls.
 
+/// Two hairline bars, one per side of the pair. Deliberately quiet: it should
+/// read as movement in the corner of your eye, not as a feature.
+struct MeterBar: View {
+    let levels: MeterLevels
+
+    var body: some View {
+        VStack(spacing: 2.5) {
+            bar(levels.left)
+            bar(levels.right)
+        }
+    }
+
+    private func bar(_ decibels: Double) -> some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.primary.opacity(0.08))
+                Capsule()
+                    .fill(colour(decibels))
+                    .frame(width: geo.size.width * fraction(decibels))
+            }
+        }
+        .frame(height: 3)
+    }
+
+    /// -60 dBFS to 0 across the width. Silence arrives as -inf.
+    private func fraction(_ decibels: Double) -> Double {
+        guard decibels.isFinite else { return 0 }
+        return min(max((decibels + 60) / 60, 0), 1)
+    }
+
+    private func colour(_ decibels: Double) -> Color {
+        if decibels >= -0.5 { return .red }
+        if decibels >= -6 { return .orange }
+        return .accentColor
+    }
+}
+
 struct SectionLabel: View {
     let text: String
     var body: some View {
@@ -219,6 +269,7 @@ struct SectionLabel: View {
 struct OutputCard: View {
     let title: String
     let state: OutputState
+    let meters: MeterLevels
     let onGain: (Double) -> Void
     let onEditing: (Bool) -> Void
     let onMute: () -> Void
@@ -245,6 +296,8 @@ struct OutputCard: View {
                         range: -64...0,
                         onEditingChanged: onEditing)
 
+            MeterBar(levels: meters)
+
             HStack(spacing: 8) {
                 PillToggle(title: "Mute", isOn: state.muted, action: onMute)
                 PillToggle(title: "Dim", isOn: state.dimmed, action: onDim)
@@ -264,6 +317,7 @@ struct ControlPanel: View {
         VStack(alignment: .leading, spacing: 18) {
             OutputCard(title: "Speakers",
                        state: model.state.speaker,
+                       meters: model.meters.speaker,
                        onGain: { model.setGain(speaker: true, $0) },
                        onEditing: { $0 ? model.beginEditing() : model.endEditing() },
                        onMute: { model.toggleMute(speaker: true) },
@@ -274,6 +328,7 @@ struct ControlPanel: View {
 
             OutputCard(title: "Headphones",
                        state: model.state.headphones,
+                       meters: model.meters.headphones,
                        onGain: { model.setGain(speaker: false, $0) },
                        onEditing: { $0 ? model.beginEditing() : model.endEditing() },
                        onMute: { model.toggleMute(speaker: false) },
@@ -304,6 +359,8 @@ struct ControlPanel: View {
         .frame(width: 340)
         .disabled(!model.connected)
         .overlay { if !model.connected { disconnected } }
+        .onAppear { model.startMeters() }
+        .onDisappear { model.stopMeters() }
     }
 
     private func inputSection(_ index: Int) -> some View {
@@ -340,6 +397,8 @@ struct ControlPanel: View {
                 }
                 .frame(width: 74, alignment: .trailing)
             }
+
+            MeterBar(levels: index == 0 ? model.meters.input1 : model.meters.input2)
 
             HStack(spacing: 8) {
                 // The hardware only has phantom on a mic input, so don't offer a

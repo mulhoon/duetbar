@@ -11,6 +11,7 @@ That last bit matters if your Duet's screen has died, which is why I wrote it.
 - **Speakers and headphones**: level, mute, dim, sum to mono
 - **Both inputs**: mic / +4 dBu / -10 dBV / instrument, gain, 48V, soft limit, phase invert
 - **Sample rate** up to 192 kHz
+- **Live meters** on both outputs and both inputs
 - **Live readout** in the menu bar
 
 Runs alongside Control 2 quite happily. Change something in one and the other
