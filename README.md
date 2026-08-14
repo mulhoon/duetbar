@@ -11,6 +11,8 @@ bit matters if your Duet's screen has died, which is why I wrote it.
 Needs macOS 13 Ventura or later. Universal, so Apple Silicon and Intel both work.
 Signed and notarised, so it opens without a Gatekeeper warning.
 
+<a href='https://ko-fi.com/A0A2LT0OP' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi3.png?v=6' border='0' alt='Buy Me a Coffee at ko-fi.com' /></a>
+
 <img src="docs/screenshot.png" width="620" alt="Duetbar panel showing four channel strips">
 
 ## What it does
