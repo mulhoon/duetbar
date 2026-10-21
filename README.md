@@ -100,9 +100,9 @@ if you want to build something else, or add another Apogee interface.
 
 ## Status
 
-Works on my Duet 2 on Apple Silicon. Property IDs are model specific, so other
-Apogee interfaces need their own set, though the protocol itself looks device
-independent.
+Works on Duet 2 on Apple Silicon. Property IDs are hashed from each device's own
+uid, so any Duet 2 works. Other Apogee interfaces will have their own tree
+layout, though the protocol itself looks device independent.
 
 ## Unofficial
 
