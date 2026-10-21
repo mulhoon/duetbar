@@ -27,39 +27,56 @@ enum Glue {
 
 // MARK: - Properties
 
-/// Opaque 32-bit identifiers, harvested from captured traffic. They are not a
-/// hash of the tree path (crc32, JUCE hashCode, FNV, djb2, sdbm and adler32 were
-/// all ruled out), but they are stable across sessions and reboots.
+/// A property is addressed by a 32-bit ID: the Java-style string hash
+/// (h = 31 * h + c, wrapping) of its path in Glue's tree, sent little endian.
+/// The path starts with the device's uid, e.g.
+/// `/dev/DuetII8100000000002119/hwout/hwout0/gain`, so the IDs differ for every
+/// Duet and have to be worked out from the uid Glue reports, never hardcoded.
 struct PropertyID {
-    let bytes: [UInt8]
+    let path: String
     let marker: UInt8
 
-    static let speakerGain  = PropertyID(bytes: [0x26, 0xb9, 0xaf, 0xa1], marker: Glue.markerDouble)
-    static let speakerMute  = PropertyID(bytes: [0xc0, 0xbf, 0xb2, 0xa1], marker: Glue.markerBool)
-    static let speakerDim   = PropertyID(bytes: [0x01, 0x46, 0x9a, 0x91], marker: Glue.markerBool)
-    static let speakerSum   = PropertyID(bytes: [0xc4, 0x7f, 0x9a, 0x91], marker: Glue.markerBool)
-    static let speakerLevel = PropertyID(bytes: [0xa8, 0x7c, 0xf0, 0xc6], marker: Glue.markerInt)
+    static let speakerGain  = PropertyID(path: "hwout/hwout0/gain", marker: Glue.markerDouble)
+    static let speakerMute  = PropertyID(path: "hwout/hwout0/mute", marker: Glue.markerBool)
+    static let speakerDim   = PropertyID(path: "hwout/hwout0/dim", marker: Glue.markerBool)
+    static let speakerSum   = PropertyID(path: "hwout/hwout0/sum", marker: Glue.markerBool)
+    static let speakerLevel = PropertyID(path: "hwout/hwout0/analogRefLevel", marker: Glue.markerInt)
 
-    static let hpGain = PropertyID(bytes: [0xc5, 0x91, 0x64, 0xa3], marker: Glue.markerDouble)
-    static let hpMute = PropertyID(bytes: [0x5f, 0x98, 0x67, 0xa3], marker: Glue.markerBool)
-    static let hpDim  = PropertyID(bytes: [0x82, 0x5d, 0xa8, 0x91], marker: Glue.markerBool)
-    static let hpSum  = PropertyID(bytes: [0x45, 0x97, 0xa8, 0x91], marker: Glue.markerBool)
+    static let hpGain = PropertyID(path: "hwout/hwout1/gain", marker: Glue.markerDouble)
+    static let hpMute = PropertyID(path: "hwout/hwout1/mute", marker: Glue.markerBool)
+    static let hpDim  = PropertyID(path: "hwout/hwout1/dim", marker: Glue.markerBool)
+    static let hpSum  = PropertyID(path: "hwout/hwout1/sum", marker: Glue.markerBool)
 
-    static let sampleRate = PropertyID(bytes: [0xf1, 0xd6, 0x35, 0xbf], marker: Glue.markerInt)
+    static let sampleRate = PropertyID(path: "samplerate", marker: Glue.markerInt)
 
-    static let in1Source    = PropertyID(bytes: [0x68, 0x76, 0x87, 0x5c], marker: Glue.markerInt)
-    static let in1MicGain   = PropertyID(bytes: [0x9c, 0x4a, 0x98, 0x74], marker: Glue.markerDouble)
-    static let in1InstGain  = PropertyID(bytes: [0x09, 0xd4, 0x8c, 0xc3], marker: Glue.markerDouble)
-    static let in1SoftLimit = PropertyID(bytes: [0xaa, 0x62, 0x68, 0xe5], marker: Glue.markerBool)
-    static let in1Phase     = PropertyID(bytes: [0x4d, 0x93, 0x8b, 0x39], marker: Glue.markerBool)
-    static let in1Phantom   = PropertyID(bytes: [0x41, 0x07, 0x0c, 0x92], marker: Glue.markerBool)
+    static let in1Source    = PropertyID(path: "hwin/hwin0/analogRefLevel", marker: Glue.markerInt)
+    static let in1MicGain   = PropertyID(path: "hwin/hwin0/micSettings/PreModelDuet/gain", marker: Glue.markerDouble)
+    static let in1InstGain  = PropertyID(path: "hwin/hwin0/instSettings/PreModelDuet/gain", marker: Glue.markerDouble)
+    static let in1SoftLimit = PropertyID(path: "hwin/hwin0/softLimit", marker: Glue.markerBool)
+    static let in1Phase     = PropertyID(path: "hwin/hwin0/polarityInvert", marker: Glue.markerBool)
+    static let in1Phantom   = PropertyID(path: "hwin/hwin0/micSettings/phantom", marker: Glue.markerBool)
 
-    static let in2Source    = PropertyID(bytes: [0x47, 0x54, 0x19, 0x3e], marker: Glue.markerInt)
-    static let in2MicGain   = PropertyID(bytes: [0xdd, 0x12, 0x81, 0x89], marker: Glue.markerDouble)
-    static let in2InstGain  = PropertyID(bytes: [0xe8, 0x13, 0xbd, 0x4b], marker: Glue.markerDouble)
-    static let in2SoftLimit = PropertyID(bytes: [0x6b, 0x15, 0x4d, 0x7a], marker: Glue.markerBool)
-    static let in2Phase     = PropertyID(bytes: [0x2c, 0x71, 0x1d, 0x1b], marker: Glue.markerBool)
-    static let in2Phantom   = PropertyID(bytes: [0xc2, 0xfc, 0xa4, 0x9e], marker: Glue.markerBool)
+    static let in2Source    = PropertyID(path: "hwin/hwin1/analogRefLevel", marker: Glue.markerInt)
+    static let in2MicGain   = PropertyID(path: "hwin/hwin1/micSettings/PreModelDuet/gain", marker: Glue.markerDouble)
+    static let in2InstGain  = PropertyID(path: "hwin/hwin1/instSettings/PreModelDuet/gain", marker: Glue.markerDouble)
+    static let in2SoftLimit = PropertyID(path: "hwin/hwin1/softLimit", marker: Glue.markerBool)
+    static let in2Phase     = PropertyID(path: "hwin/hwin1/polarityInvert", marker: Glue.markerBool)
+    static let in2Phantom   = PropertyID(path: "hwin/hwin1/micSettings/phantom", marker: Glue.markerBool)
+
+    /// The wire ID for this property on the device with `uid`.
+    func bytes(uid: String) -> [UInt8] {
+        bytes(continuing: pathHash("/dev/\(uid)/"))
+    }
+
+    /// Hashes the path on from a state that already covers the `/dev/<uid>/`
+    /// prefix. Lets the self check reproduce captures without knowing their uid.
+    func bytes(continuing state: UInt32) -> [UInt8] {
+        withUnsafeBytes(of: pathHash(path, from: state).littleEndian) { Array($0) }
+    }
+}
+
+func pathHash(_ text: String, from state: UInt32 = 0) -> UInt32 {
+    text.utf8.reduce(state) { $0 &* 31 &+ UInt32($1) }
 }
 
 /// One picker per input covers both the connector and the reference level.
@@ -108,8 +125,8 @@ func frame(_ payload: [UInt8]) -> Data {
 
 /// Byte 1 counts from the marker onwards, and byte 2 is a CRC of the two bytes
 /// before it, which makes the running CRC zero at that point.
-func setPropertyMessage(_ id: PropertyID, value: [UInt8]) -> [UInt8] {
-    let body = [id.marker] + id.bytes + value
+func setPropertyMessage(_ id: PropertyID, idBytes: [UInt8], value: [UInt8]) -> [UInt8] {
+    let body = [id.marker] + idBytes + value
     var head: [UInt8] = [Glue.opSetProperty, UInt8(body.count)]
     head.append(crc8(head))
     let message = head + body
@@ -126,15 +143,19 @@ func doubleValue(_ value: Double) -> [UInt8] {
 
 /// Rebuilds messages captured verbatim from Control 2 and compares them. An
 /// off-by-one in the length field produces messages Glue silently ignores, so
-/// this runs at launch rather than being a test we forget.
+/// this runs at launch rather than being a test we forget. The captures came
+/// from another Duet, so the hash starts from that device's prefix state.
 func selfCheckPassed() -> Bool {
+    let captured: UInt32 = 0x89fe_3e27
+    func message(_ id: PropertyID, _ value: [UInt8]) -> [UInt8] {
+        setPropertyMessage(id, idBytes: id.bytes(continuing: captured), value: value)
+    }
     let cases: [([UInt8], String)] = [
-        (setPropertyMessage(.speakerMute, value: boolValue(true)),  "03062d03c0bfb2a10158"),
-        (setPropertyMessage(.speakerDim,  value: boolValue(true)),  "03062d0301469a91012b"),
-        (setPropertyMessage(.speakerSum,  value: boolValue(true)),  "03062d03c47f9a910196"),
-        (setPropertyMessage(.speakerLevel, value: intValue(3)),     "03090001a87cf0c60300000089"),
-        (setPropertyMessage(.speakerGain, value: doubleValue(-40.058)),
-         "030d1c0426b9afa18195438b6c0744c07b"),
+        (message(.speakerMute, boolValue(true)),  "03062d03c0bfb2a10158"),
+        (message(.speakerDim,  boolValue(true)),  "03062d0301469a91012b"),
+        (message(.speakerSum,  boolValue(true)),  "03062d03c47f9a910196"),
+        (message(.speakerLevel, intValue(3)),     "03090001a87cf0c60300000089"),
+        (message(.speakerGain, doubleValue(-40.058)), "030d1c0426b9afa18195438b6c0744c07b"),
     ]
     return cases.allSatisfy { built, expected in
         built.map { String(format: "%02x", $0) }.joined() == expected
@@ -501,6 +522,7 @@ enum GlueService {
         }
         if let device = tree.firstNode(ofType: "dev")?.children.first {
             state.sampleRate = Int(device.number("samplerate") ?? 48000)
+            writer.deviceUID = device.type
         }
         return state
     }
@@ -569,9 +591,21 @@ enum GlueService {
 final class GlueWriter {
     private var connection: GlueConnection?
     private let queue = DispatchQueue(label: "com.duetbar.writer")
+    private let uidLock = NSLock()
+    private var uid: String?
+
+    /// The uid of the device in Glue's tree, which every property ID is hashed
+    /// from. Kept fresh by each read, since a reconnected Duet can come back
+    /// with a different one.
+    var deviceUID: String? {
+        get { uidLock.lock(); defer { uidLock.unlock() }; return uid }
+        set { uidLock.lock(); uid = newValue; uidLock.unlock() }
+    }
 
     func write(_ id: PropertyID, value: [UInt8]) {
-        let payload = frame(setPropertyMessage(id, value: value))
+        // Without a uid there is no valid ID, and Glue ignores unknown ones.
+        guard let uid = deviceUID else { return }
+        let payload = frame(setPropertyMessage(id, idBytes: id.bytes(uid: uid), value: value))
         queue.async { [self] in
             if send(payload) { return }
             connection = nil
