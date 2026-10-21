@@ -58,37 +58,54 @@ Example, mute the speakers:
 f2b49e2c 0a000000  03 06 2d03 c0bfb2a1 01 58
 ```
 
+`c0bfb2a1` is the speaker mute ID on the Duet that capture came from. See below
+for working it out on yours.
+
 ## Property IDs, Duet 2
 
-Opaque 32-bit values. They are **not** a hash of the tree path: crc32, JUCE's
-`String::hashCode`, FNV-1, FNV-1a, djb2, sdbm and adler32 were all ruled out. They
-are stable across sessions and reboots, and they're model specific, so another
-interface needs its own set.
+An ID is the 32-bit Java-style string hash (`h = 31 * h + c`, wrapping, which is
+also JUCE's `String::hashCode`) of the property's path in the state tree, sent
+little endian. The path starts with the device's uid, the name of the node under
+`dev`:
 
-| Control | ID | Type |
+```
+/dev/DuetII8100000000002119/hwout/hwout0/gain
+```
+
+So IDs are per device, not just per model, and a client has to read the uid from
+the tree and hash the path itself. Hashing the path without the uid looks like it
+fails, which is why this was first taken for an opaque value.
+
+The uid comes from the Duet's serial number as Glue reads it, and it isn't
+stable: one unit here has turned up under several different uids over the years, one
+settings file each in `/Library/Application Support/Apogee/Settings`. Read it on
+every refresh rather than caching it.
+
+| Control | Path after `/dev/<uid>/` | Type |
 | --- | --- | --- |
-| Speaker level | `26b9afa1` | double, dB, -64 to 0 |
-| Speaker mute | `c0bfb2a1` | bool |
-| Speaker dim | `01469a91` | bool |
-| Speaker sum to mono | `c47f9a91` | bool |
-| Speaker line level | `a87cf0c6` | int32, 2 = +4 dBu, 3 = -10 dBV |
-| Headphone level | `c59164a3` | double, dB |
-| Headphone mute | `5f9867a3` | bool |
-| Headphone dim | `825da891` | bool |
-| Headphone sum to mono | `4597a891` | bool |
-| Sample rate | `f1d635bf` | int32, Hz |
-| Input 1 source | `6876875c` | int32, see below |
-| Input 1 mic gain | `9c4a9874` | double, dB |
-| Input 1 instrument gain | `09d48cc3` | double, dB |
-| Input 1 48V | `41070c92` | bool |
-| Input 1 soft limit | `aa6268e5` | bool |
-| Input 1 phase invert | `4d938b39` | bool |
-| Input 2 source | `4754193e` | int32 |
-| Input 2 mic gain | `dd128189` | double, dB |
-| Input 2 instrument gain | `e813bd4b` | double, dB |
-| Input 2 48V | `c2fca49e` | bool |
-| Input 2 soft limit | `6b154d7a` | bool |
-| Input 2 phase invert | `2c711d1b` | bool |
+| Speaker level | `hwout/hwout0/gain` | double, dB, -64 to 0 |
+| Speaker mute | `hwout/hwout0/mute` | bool |
+| Speaker dim | `hwout/hwout0/dim` | bool |
+| Speaker sum to mono | `hwout/hwout0/sum` | bool |
+| Speaker line level | `hwout/hwout0/analogRefLevel` | int32, 2 = +4 dBu, 3 = -10 dBV |
+| Headphone level | `hwout/hwout1/gain` | double, dB |
+| Headphone mute | `hwout/hwout1/mute` | bool |
+| Headphone dim | `hwout/hwout1/dim` | bool |
+| Headphone sum to mono | `hwout/hwout1/sum` | bool |
+| Sample rate | `samplerate` | int32, Hz |
+| Input 1 source | `hwin/hwin0/analogRefLevel` | int32, see below |
+| Input 1 mic gain | `hwin/hwin0/micSettings/PreModelDuet/gain` | double, dB |
+| Input 1 instrument gain | `hwin/hwin0/instSettings/PreModelDuet/gain` | double, dB |
+| Input 1 48V | `hwin/hwin0/micSettings/phantom` | bool |
+| Input 1 soft limit | `hwin/hwin0/softLimit` | bool |
+| Input 1 phase invert | `hwin/hwin0/polarityInvert` | bool |
+| Input 2 | the same paths under `hwin/hwin1` | |
+
+The output and input IDs first captured from Control 2 fit these paths exactly,
+though the outputs and inputs were captured under two different uids. The
+captured sample rate ID fits neither, probably a third uid; its path was
+confirmed by writing it on a second Duet 2, as were the speaker level and soft
+limit paths.
 
 Input source is one four-way picker, not a mode plus a separate level:
 
